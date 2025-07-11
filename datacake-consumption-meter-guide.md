@@ -746,6 +746,921 @@ query GasConsumptionTracking($deviceId: String!) {
 
 ---
 
+## Working with Multiple Meters and Submetering or Counters
+
+### Overview
+
+In real-world scenarios, you often need to aggregate consumption data across multiple meters for submetering applications:
+
+- **🏢 Building Energy Management** - Sum consumption across floor meters, HVAC systems, and lighting circuits
+- **🏭 Industrial Facilities** - Track total energy usage across production lines, equipment, and support systems
+- **🏠 Smart Home/Office** - Aggregate consumption from multiple smart meters and outlets
+- **👥 Multi-Location Counting** - Sum people counters across office floors, building entrances, or retail locations
+- **💧 Water Distribution** - Monitor total water usage across building zones, apartments, or facilities
+
+### Future Semantic Solution
+
+**🔮 Coming Soon: Counter Semantics**
+
+The current approach of batch fetching for KPI aggregation is a temporary solution. We are working on implementing **counter semantics** that will allow direct aggregation of consumption data across multiple meters, similar to how current semantics work for temperature, humidity, and other sensor values.
+
+**Future capability (in development):**
+```graphql
+# This will work in the future with counter semantics
+devicesFiltered(tags: { contains: ["Energy"] }) {
+  totalEnergyConsumptionToday: aggregatedNumericSemanticValue(
+    semantic: ENERGY_CONSUMPTION_CHANGE
+    timeRangeStart: "2025-07-11T00:00:00"
+    timeRangeEnd: "2025-07-12T00:00:00"
+    aggregation: SUM
+  )
+}
+```
+
+**Until then:** Use the batch fetching approach described in this guide for reliable KPI aggregation across multiple meters.
+
+### Key Considerations
+
+**⚠️ Critical Understanding for KPI Aggregation:**
+- **Semantics don't currently support consumption aggregation** - You must calculate sums in the frontend
+- **Single page queries ≠ KPI aggregation** - A single `devicesFiltered` query only returns devices for that page
+- **KPI widgets require ALL devices** - Must use asynchronous batch fetching to get complete totals
+- **Pagination is for device lists** - Use for browsing/displaying individual devices
+- **Batch processing is for KPIs** - Use for calculating totals across entire fleet
+
+### ⚠️ CRITICAL: Understanding the Pagination Limitation
+
+**This is the most important concept to understand:**
+
+```javascript
+// ❌ WRONG: This will only sum 25 devices out of 100!
+const response = await client.query({
+  query: `
+    devicesFiltered(tags: { contains: ["Energy"] }, pageSize: 25) {
+      devices {
+        energyConsumption: currentMeasurement(fieldName: "ENERGY_KWH") {
+          consumption_today: change(...)
+        }
+      }
+    }
+  `
+});
+
+// This only calculates the sum for 25 devices, not all 100!
+const totalConsumption = response.data.devices.reduce((sum, device) => 
+  sum + device.energyConsumption.consumption_today, 0
+);
+```
+
+```javascript
+// ✅ CORRECT: Batch fetch ALL devices for complete KPI
+const manager = new LargeScaleSubmeteringManager(client, workspaceId);
+const aggregatedData = await manager.loadAllMeters(["Energy"]);
+
+// This calculates the sum for ALL devices
+const totalConsumption = aggregatedData.consumption_today.total;
+```
+
+### When to Use Each Approach
+
+| Use Case | Approach | Why |
+|----------|----------|-----|
+| **📊 KPI Widgets** (Total consumption, fleet averages) | **Batch fetch ALL devices** | Must include every device in calculation |
+| **📋 Device Lists** (Browse/manage devices) | **Single page query** | Only showing subset of devices |
+| **🔍 Search Results** (Find specific devices) | **Single page query** | User browsing through results |
+| **📈 Dashboard Totals** (Sum across entire fleet) | **Batch fetch ALL devices** | Incomplete data = wrong KPIs |
+
+### Query Strategies by Scale
+
+**⚠️ Remember: The strategies below are for different use cases:**
+- **For KPI widgets** (total consumption, fleet averages): Always use batch fetching
+- **For device lists** (browsing/managing devices): Use single page queries
+
+#### Small Scale (5-20 meters)
+
+**Option A: Single Page Query (for device lists only)**
+*⚠️ Use only for displaying/browsing devices, NOT for KPIs*
+
+```graphql
+query SmallScaleDeviceList($workspaceId: String!) {
+  workspace(id: $workspaceId) {
+    energyMeters: devicesFiltered(
+      tags: { contains: ["Energy", "Submeter"] }
+      pageSize: 20  # Shows only 20 devices for browsing
+      orderBy: { verboseName: ASC }
+    ) {
+      total  # Total count of ALL devices (e.g., 100)
+      devices {  # But only returns 20 devices for this page
+        id
+        verboseName
+        tags
+        online
+        lastHeard
+        
+        # Get consumption for display purposes
+        energyConsumption: currentMeasurement(fieldName: "ACTIVE_ENERGY_IMPORT_T1_KWH") {
+          current_reading: value
+          consumption_today: change(
+            timeRangeStart: "2025-07-11T00:00:00"
+            timeRangeEnd: "2025-07-12T00:00:00"
+          )
+          consumption_this_month: change(
+            timeRangeStart: "2025-07-01T00:00:00"
+            timeRangeEnd: "2025-08-01T00:00:00"
+          )
+          # add other timespans as needed
+        }
+      }
+    }
+  }
+}
+```
+
+**Option B: Batch Fetching for KPIs (REQUIRED for totals)**
+*✅ Use for KPI widgets showing total consumption across ALL devices*
+
+```javascript
+// For KPI widgets, always use batch fetching
+async function getFleetConsumptionKPIs(workspaceId, tags = ["Energy", "Submeter"]) {
+  const manager = new LargeScaleSubmeteringManager(graphqlClient, workspaceId);
+  
+  // This fetches ALL devices, not just one page
+  const aggregatedData = await manager.loadAllMeters(tags, (progress) => {
+    console.log(`Loading meters: ${progress.devicesLoaded}/${progress.totalDevices}`);
+  });
+  
+  return {
+    // These are totals across ALL devices
+    totalConsumptionToday: aggregatedData.consumption_today.total,
+    totalConsumptionThisMonth: aggregatedData.consumption_this_month.total,
+    averageConsumptionToday: aggregatedData.consumption_today.average,
+    activeMetersCount: aggregatedData.consumption_today.count
+  };
+}
+```
+
+#### Medium Scale (20-100 meters)
+Use pagination with multiple queries:
+
+```graphql
+query MediumScaleSubmetering($workspaceId: String!, $page: Int!) {
+  workspace(id: $workspaceId) {
+    energyMeters: devicesFiltered(
+      tags: { contains: ["Energy", "Submeter"] }
+      page: $page
+      pageSize: 25  # Manageable batch size
+      orderBy: { verboseName: ASC }
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        tags
+        online
+        
+        # Focus on key consumption periods
+        energyConsumption: currentMeasurement(fieldName: "ACTIVE_ENERGY_IMPORT_T1_KWH") {
+          current_reading: value
+          consumption_today: change(
+            timeRangeStart: "2025-07-11T00:00:00"
+            timeRangeEnd: "2025-07-12T00:00:00"
+          )
+          consumption_this_month: change(
+            timeRangeStart: "2025-07-01T00:00:00"
+            timeRangeEnd: "2025-08-01T00:00:00"
+          )
+          # add other timespans as needed
+        }
+      }
+    }
+  }
+}
+```
+
+#### Large Scale (100+ meters)
+Use asynchronous batching with smaller page sizes:
+
+```graphql
+query LargeScaleSubmetering($workspaceId: String!, $page: Int!) {
+  workspace(id: $workspaceId) {
+    energyMeters: devicesFiltered(
+      tags: { contains: ["Energy", "Submeter"] }
+      page: $page
+      pageSize: 10  # Smaller batches for better performance
+      orderBy: { verboseName: ASC }
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        online
+        
+        # Minimal consumption data to reduce payload
+        energyConsumption: currentMeasurement(fieldName: "ACTIVE_ENERGY_IMPORT_T1_KWH") {
+          consumption_today: change(
+            timeRangeStart: "2025-07-11T00:00:00"
+            timeRangeEnd: "2025-07-12T00:00:00"
+          )
+          # add other timespans as needed
+        }
+      }
+    }
+  }
+}
+```
+
+### Frontend Aggregation Strategies
+
+#### Processing Multiple Meters
+
+```javascript
+// Process consumption data from multiple meters
+class SubmeteringProcessor {
+  constructor() {
+    this.meters = [];
+    this.aggregatedData = {};
+  }
+  
+  // Add meter data from API responses
+  addMeterData(metersResponse) {
+    metersResponse.devices.forEach(device => {
+      const meter = {
+        id: device.id,
+        name: device.verboseName,
+        tags: device.tags,
+        online: device.online,
+        consumption: device.energyConsumption
+      };
+      
+      this.meters.push(meter);
+    });
+  }
+  
+  // Calculate aggregated consumption totals
+  calculateAggregatedConsumption() {
+    const periods = ['consumption_today', 'consumption_yesterday', 'consumption_this_week', 'consumption_this_month'];
+    
+    periods.forEach(period => {
+      this.aggregatedData[period] = {
+        total: 0,
+        count: 0,
+        average: 0,
+        meters: []
+      };
+      
+      this.meters.forEach(meter => {
+        const consumption = meter.consumption[period];
+        if (consumption !== null && consumption !== undefined) {
+          this.aggregatedData[period].total += consumption;
+          this.aggregatedData[period].count += 1;
+          this.aggregatedData[period].meters.push({
+            id: meter.id,
+            name: meter.name,
+            consumption: consumption
+          });
+        }
+      });
+      
+      // Calculate average
+      if (this.aggregatedData[period].count > 0) {
+        this.aggregatedData[period].average = 
+          this.aggregatedData[period].total / this.aggregatedData[period].count;
+      }
+    });
+  }
+  
+  // Get aggregated results
+  getAggregatedData() {
+    return this.aggregatedData;
+  }
+  
+  // Get top consumers for a period
+  getTopConsumers(period, limit = 5) {
+    const periodData = this.aggregatedData[period];
+    if (!periodData || !periodData.meters) return [];
+    
+    return periodData.meters
+      .sort((a, b) => b.consumption - a.consumption)
+      .slice(0, limit);
+  }
+  
+  // Get consumption by tag groups
+  getConsumptionByTags() {
+    const tagGroups = {};
+    
+    this.meters.forEach(meter => {
+      meter.tags.forEach(tag => {
+        if (!tagGroups[tag]) {
+          tagGroups[tag] = {
+            total_today: 0,
+            total_month: 0,
+            meter_count: 0,
+            meters: []
+          };
+        }
+        
+        tagGroups[tag].total_today += meter.consumption.consumption_today || 0;
+        tagGroups[tag].total_month += meter.consumption.consumption_this_month || 0;
+        tagGroups[tag].meter_count += 1;
+        tagGroups[tag].meters.push(meter.id);
+      });
+    });
+    
+    return tagGroups;
+  }
+}
+```
+
+#### Asynchronous Batching for Large Scale
+
+```javascript
+// Handle large numbers of meters with batching
+class LargeScaleSubmeteringManager {
+  constructor(graphqlClient, workspaceId) {
+    this.client = graphqlClient;
+    this.workspaceId = workspaceId;
+    this.batchSize = 10;
+    this.processor = new SubmeteringProcessor();
+  }
+  
+  // Load all meters in batches
+  async loadAllMeters(tags = ["Energy", "Submeter"], onProgress = null) {
+    let page = 0;
+    let totalPages = 0;
+    let allLoaded = false;
+    
+    while (!allLoaded) {
+      try {
+        const response = await this.loadMeterBatch(tags, page);
+        const data = response.data.workspace.energyMeters;
+        
+        // Calculate total pages on first request
+        if (page === 0) {
+          totalPages = Math.ceil(data.total / this.batchSize);
+        }
+        
+        // Process this batch
+        this.processor.addMeterData(data);
+        
+        // Report progress
+        if (onProgress) {
+          onProgress({
+            page: page + 1,
+            totalPages: totalPages,
+            devicesLoaded: this.processor.meters.length,
+            totalDevices: data.total
+          });
+        }
+        
+        // Check if we've loaded all pages
+        allLoaded = (page + 1) >= totalPages || data.devices.length === 0;
+        page++;
+        
+        // Small delay between batches to avoid overwhelming the API
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+      } catch (error) {
+        console.error(`Error loading meter batch ${page}:`, error);
+        throw error;
+      }
+    }
+    
+    // Calculate final aggregated data
+    this.processor.calculateAggregatedConsumption();
+    return this.processor.getAggregatedData();
+  }
+  
+  // Load a single batch of meters
+  async loadMeterBatch(tags, page) {
+    const query = `
+      query LoadMeterBatch($workspaceId: String!, $tags: [String!]!, $page: Int!) {
+        workspace(id: $workspaceId) {
+          energyMeters: devicesFiltered(
+            tags: { contains: $tags }
+            page: $page
+            pageSize: ${this.batchSize}
+            orderBy: { verboseName: ASC }
+          ) {
+            total
+            devices {
+              id
+              verboseName
+              tags
+              online
+              energyConsumption: currentMeasurement(fieldName: "ACTIVE_ENERGY_IMPORT_T1_KWH") {
+                consumption_today: change(
+                  timeRangeStart: "2025-07-11T00:00:00"
+                  timeRangeEnd: "2025-07-12T00:00:00"
+                )
+                consumption_this_month: change(
+                  timeRangeStart: "2025-07-01T00:00:00"
+                  timeRangeEnd: "2025-08-01T00:00:00"
+                )
+              }
+            }
+          }
+        }
+      }
+    `;
+    
+    return await this.client.query({
+      query,
+      variables: {
+        workspaceId: this.workspaceId,
+        tags,
+        page
+      }
+    });
+  }
+}
+```
+
+### Complete Submetering Examples
+
+#### Office Building Energy Dashboard
+
+```graphql
+query OfficeBuildingEnergyDashboard($workspaceId: String!) {
+  workspace(id: $workspaceId) {
+    # Floor-level energy meters
+    floorMeters: devicesFiltered(
+      tags: { contains: ["Energy", "Floor"] }
+      pageSize: 20
+      orderBy: { verboseName: ASC }
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        tags
+        online
+        
+        energyMeter: currentMeasurement(fieldName: "ACTIVE_ENERGY_IMPORT_T1_KWH") {
+          current_reading: value
+          consumption_today: change(
+            timeRangeStart: "2025-07-11T00:00:00"
+            timeRangeEnd: "2025-07-12T00:00:00"
+          )
+          consumption_this_month: change(
+            timeRangeStart: "2025-07-01T00:00:00"
+            timeRangeEnd: "2025-08-01T00:00:00"
+          )
+        }
+      }
+    }
+    
+    # HVAC system meters
+    hvacMeters: devicesFiltered(
+      tags: { contains: ["Energy", "HVAC"] }
+      pageSize: 10
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        tags
+        online
+        
+        energyMeter: currentMeasurement(fieldName: "ENERGY_CONSUMPTION_KWH") {
+          current_reading: value
+          consumption_today: change(
+            timeRangeStart: "2025-07-11T00:00:00"
+            timeRangeEnd: "2025-07-12T00:00:00"
+          )
+          consumption_this_month: change(
+            timeRangeStart: "2025-07-01T00:00:00"
+            timeRangeEnd: "2025-08-01T00:00:00"
+          )
+        }
+      }
+    }
+    
+    # Lighting circuit meters
+    lightingMeters: devicesFiltered(
+      tags: { contains: ["Energy", "Lighting"] }
+      pageSize: 15
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        tags
+        online
+        
+        energyMeter: currentMeasurement(fieldName: "LIGHTING_ENERGY_KWH") {
+          current_reading: value
+          consumption_today: change(
+            timeRangeStart: "2025-07-11T00:00:00"
+            timeRangeEnd: "2025-07-12T00:00:00"
+          )
+          consumption_this_month: change(
+            timeRangeStart: "2025-07-01T00:00:00"
+            timeRangeEnd: "2025-08-01T00:00:00"
+          )
+        }
+      }
+    }
+  }
+}
+```
+
+#### Multi-Location People Counter Aggregation
+
+```graphql
+query MultiLocationPeopleCounters($workspaceId: String!) {
+  workspace(id: $workspaceId) {
+    # Main building entrances
+    mainEntrances: devicesFiltered(
+      tags: { contains: ["People", "Main-Entrance"] }
+      pageSize: 10
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        tags
+        online
+        
+        peopleCounter: currentMeasurement(fieldName: "PEOPLE_COUNT_TOTAL") {
+          total_count: value
+          
+          # Business hours today
+          visitors_today: change(
+            timeRangeStart: "2025-07-11T08:00:00"
+            timeRangeEnd: "2025-07-11T18:00:00"
+          )
+          
+          # This week's traffic
+          visitors_this_week: change(
+            timeRangeStart: "2025-07-07T08:00:00"
+            timeRangeEnd: "2025-07-14T18:00:00"
+          )
+          
+          # Monthly totals
+          visitors_this_month: change(
+            timeRangeStart: "2025-07-01T08:00:00"
+            timeRangeEnd: "2025-08-01T18:00:00"
+          )
+        }
+      }
+    }
+    
+    # Floor-level counters
+    floorCounters: devicesFiltered(
+      tags: { contains: ["People", "Floor"] }
+      pageSize: 15
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        tags
+        online
+        
+        peopleCounter: currentMeasurement(fieldName: "PEOPLE_COUNT_TOTAL") {
+          total_count: value
+          visitors_today: change(
+            timeRangeStart: "2025-07-11T08:00:00"
+            timeRangeEnd: "2025-07-11T18:00:00"
+          )
+          visitors_this_week: change(
+            timeRangeStart: "2025-07-07T08:00:00"
+            timeRangeEnd: "2025-07-14T18:00:00"
+          )
+        }
+      }
+    }
+    
+    # Conference room counters
+    conferenceRoomCounters: devicesFiltered(
+      tags: { contains: ["People", "Conference-Room"] }
+      pageSize: 20
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        tags
+        online
+        
+        peopleCounter: currentMeasurement(fieldName: "PEOPLE_COUNT_TOTAL") {
+          total_count: value
+          visitors_today: change(
+            timeRangeStart: "2025-07-11T08:00:00"
+            timeRangeEnd: "2025-07-11T18:00:00"
+          )
+        }
+      }
+    }
+  }
+}
+```
+
+### Usage Examples
+
+#### Complete Office Building Dashboard Implementation
+
+```javascript
+// Complete implementation for office building energy management
+class OfficeBuildingEnergyManager {
+  constructor(graphqlClient, workspaceId) {
+    this.client = graphqlClient;
+    this.workspaceId = workspaceId;
+    this.processor = new SubmeteringProcessor();
+  }
+  
+  // Load all building energy data
+  async loadBuildingEnergyData() {
+    const response = await this.client.query({
+      query: `
+        query OfficeBuildingEnergyDashboard($workspaceId: String!) {
+          workspace(id: $workspaceId) {
+            floorMeters: devicesFiltered(
+              tags: { contains: ["Energy", "Floor"] }
+              pageSize: 20
+            ) {
+              total
+              devices {
+                id
+                verboseName
+                tags
+                online
+                energyMeter: currentMeasurement(fieldName: "ACTIVE_ENERGY_IMPORT_T1_KWH") {
+                  current_reading: value
+                  consumption_today: change(
+                    timeRangeStart: "2025-07-11T00:00:00"
+                    timeRangeEnd: "2025-07-12T00:00:00"
+                  )
+                  consumption_this_month: change(
+                    timeRangeStart: "2025-07-01T00:00:00"
+                    timeRangeEnd: "2025-08-01T00:00:00"
+                  )
+                }
+              }
+            }
+            hvacMeters: devicesFiltered(
+              tags: { contains: ["Energy", "HVAC"] }
+              pageSize: 10
+            ) {
+              total
+              devices {
+                id
+                verboseName
+                tags
+                online
+                energyMeter: currentMeasurement(fieldName: "ENERGY_CONSUMPTION_KWH") {
+                  current_reading: value
+                  consumption_today: change(
+                    timeRangeStart: "2025-07-11T00:00:00"
+                    timeRangeEnd: "2025-07-12T00:00:00"
+                  )
+                  consumption_this_month: change(
+                    timeRangeStart: "2025-07-01T00:00:00"
+                    timeRangeEnd: "2025-08-01T00:00:00"
+                  )
+                }
+              }
+            }
+            lightingMeters: devicesFiltered(
+              tags: { contains: ["Energy", "Lighting"] }
+              pageSize: 15
+            ) {
+              total
+              devices {
+                id
+                verboseName
+                tags
+                online
+                energyMeter: currentMeasurement(fieldName: "LIGHTING_ENERGY_KWH") {
+                  current_reading: value
+                  consumption_today: change(
+                    timeRangeStart: "2025-07-11T00:00:00"
+                    timeRangeEnd: "2025-07-12T00:00:00"
+                  )
+                  consumption_this_month: change(
+                    timeRangeStart: "2025-07-01T00:00:00"
+                    timeRangeEnd: "2025-08-01T00:00:00"
+                  )
+                }
+              }
+            }
+          }
+        }
+      `,
+      variables: { workspaceId: this.workspaceId }
+    });
+    
+    // Process all meter groups
+    const data = response.data.workspace;
+    this.processor.addMeterData(data.floorMeters);
+    this.processor.addMeterData(data.hvacMeters);
+    this.processor.addMeterData(data.lightingMeters);
+    
+    // Calculate aggregated consumption
+    this.processor.calculateAggregatedConsumption();
+    
+    return this.generateBuildingReport();
+  }
+  
+  // Generate comprehensive building energy report
+  generateBuildingReport() {
+    const aggregated = this.processor.getAggregatedData();
+    const byTags = this.processor.getConsumptionByTags();
+    
+    return {
+      overview: {
+        totalConsumptionToday: aggregated.consumption_today.total,
+        totalConsumptionThisMonth: aggregated.consumption_this_month.total,
+        totalActiveMeters: aggregated.consumption_today.count,
+        averageConsumptionToday: aggregated.consumption_today.average
+      },
+      
+      bySystem: {
+        floors: {
+          totalToday: byTags['Floor']?.total_today || 0,
+          totalMonth: byTags['Floor']?.total_month || 0,
+          meterCount: byTags['Floor']?.meter_count || 0
+        },
+        hvac: {
+          totalToday: byTags['HVAC']?.total_today || 0,
+          totalMonth: byTags['HVAC']?.total_month || 0,
+          meterCount: byTags['HVAC']?.meter_count || 0
+        },
+        lighting: {
+          totalToday: byTags['Lighting']?.total_today || 0,
+          totalMonth: byTags['Lighting']?.total_month || 0,
+          meterCount: byTags['Lighting']?.meter_count || 0
+        }
+      },
+      
+      topConsumers: {
+        today: this.processor.getTopConsumers('consumption_today', 10),
+        thisMonth: this.processor.getTopConsumers('consumption_this_month', 10)
+      },
+      
+      efficiency: {
+        consumptionPerMeter: aggregated.consumption_today.total / aggregated.consumption_today.count,
+        monthlyGrowth: this.calculateMonthlyGrowth(aggregated)
+      }
+    };
+  }
+  
+  // Calculate monthly growth trend
+  calculateMonthlyGrowth(aggregated) {
+    const todayConsumption = aggregated.consumption_today.total;
+    const monthlyConsumption = aggregated.consumption_this_month.total;
+    
+    // Estimate daily average for the month
+    const currentDay = new Date().getDate();
+    const monthlyAverage = monthlyConsumption / currentDay;
+    
+    return {
+      todayVsMonthlyAverage: ((todayConsumption - monthlyAverage) / monthlyAverage) * 100,
+      projectedMonthlyTotal: monthlyAverage * 31
+    };
+  }
+}
+
+// Usage example
+async function displayBuildingEnergyDashboard() {
+  const manager = new OfficeBuildingEnergyManager(graphqlClient, workspaceId);
+  
+  try {
+    const report = await manager.loadBuildingEnergyData();
+    
+    console.log('Building Energy Report:');
+    console.log('======================');
+    console.log(`Total Energy Today: ${report.overview.totalConsumptionToday.toFixed(2)} kWh`);
+    console.log(`Total Energy This Month: ${report.overview.totalConsumptionThisMonth.toFixed(2)} kWh`);
+    console.log(`Active Meters: ${report.overview.totalActiveMeters}`);
+    console.log('');
+    
+    console.log('By System:');
+    console.log(`- Floors: ${report.bySystem.floors.totalToday.toFixed(2)} kWh today`);
+    console.log(`- HVAC: ${report.bySystem.hvac.totalToday.toFixed(2)} kWh today`);
+    console.log(`- Lighting: ${report.bySystem.lighting.totalToday.toFixed(2)} kWh today`);
+    console.log('');
+    
+    console.log('Top Consumers Today:');
+    report.topConsumers.today.forEach((consumer, index) => {
+      console.log(`${index + 1}. ${consumer.name}: ${consumer.consumption.toFixed(2)} kWh`);
+    });
+    
+  } catch (error) {
+    console.error('Error loading building energy data:', error);
+  }
+}
+```
+
+### Real-World Scenario: Building the Right Dashboard
+
+**Scenario**: You have 100 energy meters and need to build a dashboard with:
+1. **KPI widget** showing "Total Energy Consumption Today: 1,250 kWh"
+2. **Device list** showing 25 meters per page for management
+
+#### ❌ Common Mistake (Wrong Approach)
+
+```javascript
+// This is WRONG - will only show consumption for 25 meters!
+async function buildDashboard() {
+  const response = await client.query({
+    query: `
+      devicesFiltered(tags: { contains: ["Energy"] }, pageSize: 25) {
+        total  # Returns 100 (correct total count)
+        devices {  # But only returns 25 devices!
+          energyConsumption: currentMeasurement(fieldName: "ENERGY_KWH") {
+            consumption_today: change(...)
+          }
+        }
+      }
+    `
+  });
+  
+  // This calculation is WRONG - only sums 25 devices out of 100!
+  const totalConsumption = response.data.devices.reduce((sum, device) => 
+    sum + device.energyConsumption.consumption_today, 0
+  );
+  
+  return {
+    kpiWidget: `Total Energy Today: ${totalConsumption} kWh`,  // WRONG: Shows ~250 kWh instead of 1,250 kWh
+    deviceList: response.data.devices  // Correct: Shows 25 devices for browsing
+  };
+}
+```
+
+#### ✅ Correct Approach
+
+```javascript
+async function buildDashboard() {
+  // 1. KPI Widget - Batch fetch ALL devices
+  const kpiManager = new LargeScaleSubmeteringManager(client, workspaceId);
+  const aggregatedData = await kpiManager.loadAllMeters(["Energy"]);
+  
+  // 2. Device List - Single page query 
+  const deviceListResponse = await client.query({
+    query: `
+      devicesFiltered(tags: { contains: ["Energy"] }, pageSize: 25, page: 0) {
+        total
+        devices {
+          id
+          verboseName
+          online
+          energyConsumption: currentMeasurement(fieldName: "ENERGY_KWH") {
+            consumption_today: change(...)
+          }
+        }
+      }
+    `
+  });
+  
+  return {
+    kpiWidget: `Total Energy Today: ${aggregatedData.consumption_today.total} kWh`,  // CORRECT: Shows 1,250 kWh
+    deviceList: deviceListResponse.data.devices,  // CORRECT: Shows 25 devices for browsing
+    totalDevices: deviceListResponse.data.total   // CORRECT: Shows 100 total devices
+  };
+}
+```
+
+### Performance Best Practices for Submetering
+
+#### Query Optimization
+
+✅ **Do:**
+- **Use batch fetching for KPIs** - Must include ALL devices in totals
+- **Use single page queries for device lists** - Only showing subset of devices
+- Batch large meter sets into manageable chunks (10-25 devices per query)
+- Cache aggregated results for dashboard updates
+- Use specific tags to filter relevant meters only
+- Process data asynchronously to avoid blocking the UI
+
+❌ **Don't:**
+- **Use single page queries for KPIs** - Will give incorrect totals
+- Query all meters without pagination (for device lists)
+- Mix consumption queries with history queries
+- Calculate aggregations in real-time without caching
+- Ignore error handling for individual meter failures
+- Query more time periods than needed
+
+#### Frontend Processing
+
+✅ **Do:**
+- **Clearly separate KPI logic from device list logic** - Use different query strategies
+- Validate consumption values (handle nulls and counter resets)
+- Aggregate data in organized classes/modules
+- Provide progress indicators for large batch operations
+- Cache processed results for subsequent views
+- Handle offline meters gracefully
+
+❌ **Don't:**
+- **Confuse device list pagination with KPI aggregation** - They serve different purposes
+- Assume all meters have valid consumption data
+- Process large datasets on the main thread
+- Recalculate aggregations on every UI update
+- Ignore meter online/offline status
+- Skip error handling for individual meter processing
+
+---
+
 ## Complete Examples
 
 ### Multi-Device Energy Dashboard
