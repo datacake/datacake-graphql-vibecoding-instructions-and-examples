@@ -16,9 +16,10 @@
 9. [Dynamic Multi-Product Queries with Role Fields](#dynamic-multi-product-queries-with-role-fields)
 10. [Dynamic Semantic Queries for KPIs and Cross-Device Compatibility](#dynamic-semantic-queries-for-kpis-and-cross-device-compatibility)
 11. [Tag Organization Strategies](#tag-organization-strategies)
-12. [Performance Considerations](#performance-considerations)
-13. [Key Performance Patterns](#key-performance-patterns)
-14. [Complete Examples](#complete-examples)
+12. [Device Folder Structure](#device-folder-structure)
+13. [Performance Considerations](#performance-considerations)
+14. [Key Performance Patterns](#key-performance-patterns)
+15. [Complete Examples](#complete-examples)
 
 ---
 
@@ -709,6 +710,669 @@ devicesFiltered(tags: { contains: ["CO2-Monitor"] })
 2. **Hierarchical structure** - Location → Sub-location → Function
 3. **Avoid spaces** - Use hyphens or underscores
 4. **Document your schema** - Keep a tag reference for your team
+
+---
+
+## Device Folder Structure
+
+### Overview
+
+Datacake's folder structure feature allows you to organize devices into hierarchical folders in the sidebar. Folders provide a visual organization layer on top of your device tagging strategy, making it easier for users to navigate and find devices.
+
+### Key Concepts
+
+- **Folder Hierarchy** - Unlimited nesting of folders within folders
+- **Tag-Based Assignment** - Devices are automatically included in folders based on their tags
+- **Tag Conjunction** - Control whether devices must match ALL tags or ANY tag
+- **Multiple Views** - Folders can display devices in different views (OVERVIEW, LIST, GRID, MAP)
+- **Custom Icons** - Each folder can have a custom icon for visual identification
+
+### Folder Properties
+
+Each folder contains the following properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| **id** | String | Unique folder identifier (UUID) |
+| **name** | String | Display name of the folder |
+| **icon** | String | Icon identifier (e.g., "folder", "sun", "chart-bar") |
+| **tags** | Array | List of tags used to filter devices |
+| **tagsConjunction** | String | "AND" (all tags required) or "OR" (any tag matches) |
+| **type** | String | Always "DEVICE_FOLDER" |
+| **items** | Array | Nested subfolders (recursive structure) |
+| **description** | String | Optional folder description |
+| **initialView** | String | Default view when folder is opened |
+| **availableViews** | Array | Views available for this folder |
+| **online** | Boolean | Computed status (not typically used) |
+
+### Loading Folder Structure
+
+```graphql
+query LoadFolderStructure($workspaceId: String!) {
+  workspace(id: $workspaceId) {
+    deviceFolders
+  }
+}
+```
+
+**Response:**
+
+The `deviceFolders` field returns a JSON string containing an array of folder objects. Note that it's a **stringified JSON**, so you'll need to parse it on the client side.
+
+```json
+{
+  "data": {
+    "workspace": {
+      "deviceFolders": "[{\"id\":\"901d6df7-4028-4763-bca4-bac21af049e1\",\"icon\":\"folder\",\"name\":\"Cafeteria\",\"tags\":[\"Cafeteria\"],\"type\":\"DEVICE_FOLDER\",\"items\":[],\"online\":false,\"description\":\"\",\"initialView\":\"OVERVIEW\",\"availableViews\":[\"OVERVIEW\",\"LIST\"],\"tagsConjunction\":\"AND\"}]"
+    }
+  }
+}
+```
+
+### Parsed Folder Structure Example
+
+After parsing the JSON string, you'll have a structure like this:
+
+```javascript
+const parsedFolders = JSON.parse(response.data.workspace.deviceFolders);
+
+// Example structure:
+[
+  {
+    "id": "901d6df7-4028-4763-bca4-bac21af049e1",
+    "icon": "folder",
+    "name": "Cafeteria",
+    "tags": ["Cafeteria"],
+    "type": "DEVICE_FOLDER",
+    "items": [],
+    "online": false,
+    "description": "",
+    "initialView": "OVERVIEW",
+    "availableViews": ["OVERVIEW", "LIST"],
+    "tagsConjunction": "AND"
+  },
+  {
+    "id": "a2ddb645-827d-4bf3-a6f3-a8687458a177",
+    "icon": "folder",
+    "name": "Second Floor",
+    "tags": ["ASS"],
+    "type": "DEVICE_FOLDER",
+    "items": [
+      {
+        "id": "ef74c797-c558-40a0-92e6-e2b33d1c662e",
+        "icon": "folder",
+        "name": "Executive Area",
+        "tags": ["GL"],
+        "type": "DEVICE_FOLDER",
+        "items": [
+          {
+            "id": "50eedb91-778c-487a-94a8-557db8a9e85f",
+            "icon": "folder",
+            "name": "Exec 1",
+            "tags": [],
+            "type": "DEVICE_FOLDER",
+            "items": [],
+            "online": false,
+            "description": "",
+            "initialView": "OVERVIEW",
+            "availableViews": ["OVERVIEW", "LIST", "GRID", "MAP"],
+            "tagsConjunction": "AND"
+          }
+        ],
+        "online": false,
+        "description": "",
+        "initialView": "OVERVIEW",
+        "availableViews": ["OVERVIEW", "LIST"],
+        "tagsConjunction": "AND"
+      },
+      {
+        "id": "04f1f948-ffe2-4672-8ef9-feab0e13367c",
+        "icon": "sun",
+        "name": "Bathrooms",
+        "tags": ["WC"],
+        "type": "DEVICE_FOLDER",
+        "items": [],
+        "online": false,
+        "description": "",
+        "initialView": "LIST",
+        "availableViews": ["OVERVIEW", "LIST"],
+        "tagsConjunction": "AND"
+      }
+    ],
+    "online": false,
+    "description": "",
+    "initialView": "OVERVIEW",
+    "availableViews": ["OVERVIEW", "LIST"],
+    "tagsConjunction": "AND"
+  }
+]
+```
+
+### Tag Conjunction Behavior
+
+The `tagsConjunction` property controls how devices are matched to folders:
+
+#### AND - All Tags Required
+
+```javascript
+{
+  "name": "Meeting Rooms Floor 2",
+  "tags": ["Meeting", "Floor-2"],
+  "tagsConjunction": "AND"
+}
+// Matches devices that have BOTH "Meeting" AND "Floor-2" tags
+```
+
+#### OR - Any Tag Matches
+
+```javascript
+{
+  "name": "All Sensors",
+  "tags": ["Temperature", "Humidity", "CO2"],
+  "tagsConjunction": "OR"
+}
+// Matches devices that have Temperature OR Humidity OR CO2 tags
+```
+
+### Updating Folder Structure
+
+To update the folder structure, use the `updateDeviceFolders` mutation:
+
+```graphql
+mutation UpdateFolderStructure($workspaceId: String!, $foldersJson: String!) {
+  updateDeviceFolders(input: {
+    workspaceId: $workspaceId
+    deviceFolders: $foldersJson
+  }) {
+    ok
+  }
+}
+```
+
+**Variables:**
+
+```json
+{
+  "workspaceId": "764cd5ed-520d-4f15-9391-4de66f3e6359",
+  "foldersJson": "[{\"id\":\"901d6df7-4028-4763-bca4-bac21af049e1\",\"icon\":\"folder\",\"name\":\"Cafeteria\",\"tags\":[\"Cafeteria\"],\"type\":\"DEVICE_FOLDER\",\"items\":[],\"online\":false,\"description\":\"\",\"initialView\":\"OVERVIEW\",\"availableViews\":[\"OVERVIEW\",\"LIST\"],\"tagsConjunction\":\"AND\"}]"
+}
+```
+
+**Important:** The `deviceFolders` parameter must be a **stringified JSON array**, not a JavaScript object.
+
+### Processing Folder Structure in Frontend
+
+```javascript
+// Fetch and parse folder structure
+async function loadFolderStructure(workspaceId) {
+  const query = `
+    query LoadFolderStructure($workspaceId: String!) {
+      workspace(id: $workspaceId) {
+        deviceFolders
+      }
+    }
+  `;
+  
+  const response = await graphqlClient.query({
+    query,
+    variables: { workspaceId }
+  });
+  
+  // Parse the JSON string
+  const folders = JSON.parse(response.data.workspace.deviceFolders);
+  return folders;
+}
+
+// Create folder structure
+function createFolderStructure() {
+  const folders = [
+    {
+      id: generateUUID(),
+      icon: "folder",
+      name: "Building A",
+      tags: ["BuildingA"],
+      type: "DEVICE_FOLDER",
+      items: [
+        {
+          id: generateUUID(),
+          icon: "folder",
+          name: "Floor 1",
+          tags: ["BuildingA", "Floor1"],
+          type: "DEVICE_FOLDER",
+          items: [],
+          online: false,
+          description: "First floor devices",
+          initialView: "OVERVIEW",
+          availableViews: ["OVERVIEW", "LIST"],
+          tagsConjunction: "AND"
+        }
+      ],
+      online: false,
+      description: "All devices in Building A",
+      initialView: "OVERVIEW",
+      availableViews: ["OVERVIEW", "LIST", "GRID"],
+      tagsConjunction: "AND"
+    }
+  ];
+  
+  return JSON.stringify(folders);
+}
+
+// Update folder structure
+async function updateFolderStructure(workspaceId, folders) {
+  const mutation = `
+    mutation UpdateFolderStructure($workspaceId: String!, $foldersJson: String!) {
+      updateDeviceFolders(input: {
+        workspaceId: $workspaceId
+        deviceFolders: $foldersJson
+      }) {
+        ok
+      }
+    }
+  `;
+  
+  const foldersJson = JSON.stringify(folders);
+  
+  const response = await graphqlClient.mutate({
+    mutation,
+    variables: {
+      workspaceId,
+      foldersJson
+    }
+  });
+  
+  return response.data.updateDeviceFolders.ok;
+}
+```
+
+### Recursive Folder Rendering
+
+```javascript
+// Render folder tree recursively
+function renderFolderTree(folders, level = 0) {
+  return folders.map(folder => ({
+    id: folder.id,
+    name: folder.name,
+    icon: folder.icon,
+    level: level,
+    tags: folder.tags,
+    tagsConjunction: folder.tagsConjunction,
+    initialView: folder.initialView,
+    availableViews: folder.availableViews,
+    children: folder.items ? renderFolderTree(folder.items, level + 1) : []
+  }));
+}
+
+// Get all folders as flat list with parent references
+function flattenFolderTree(folders, parentId = null, result = []) {
+  folders.forEach(folder => {
+    result.push({
+      ...folder,
+      parentId: parentId,
+      hasChildren: folder.items && folder.items.length > 0
+    });
+    
+    if (folder.items && folder.items.length > 0) {
+      flattenFolderTree(folder.items, folder.id, result);
+    }
+  });
+  
+  return result;
+}
+
+// Find folder by ID
+function findFolderById(folders, folderId) {
+  for (const folder of folders) {
+    if (folder.id === folderId) {
+      return folder;
+    }
+    
+    if (folder.items && folder.items.length > 0) {
+      const found = findFolderById(folder.items, folderId);
+      if (found) return found;
+    }
+  }
+  
+  return null;
+}
+```
+
+### Getting Devices for a Folder
+
+Once you have a folder, use its tags to query devices:
+
+```javascript
+// Get devices matching folder criteria
+async function getDevicesForFolder(workspaceId, folder) {
+  const query = `
+    query GetFolderDevices(
+      $workspaceId: String!
+      $tags: [String!]
+      $tagsCondition: String!
+    ) {
+      workspace(id: $workspaceId) {
+        devicesFiltered(
+          tags: { 
+            ${folder.tagsConjunction === "AND" ? "contains" : "overlap"}: $tags 
+          }
+          pageSize: 50
+        ) {
+          total
+          devices {
+            id
+            verboseName
+            online
+            lastHeard
+            tags
+            roleFields {
+              value
+              role
+              field {
+                fieldName
+                unit
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  
+  const response = await graphqlClient.query({
+    query,
+    variables: {
+      workspaceId,
+      tags: folder.tags,
+      tagsCondition: folder.tagsConjunction
+    }
+  });
+  
+  return response.data.workspace.devicesFiltered;
+}
+```
+
+### Folder Organization Best Practices
+
+1. **Hierarchical Structure**
+   - Use meaningful folder hierarchy that reflects physical or logical organization
+   - Example: `Building → Floor → Room Type → Specific Room`
+
+2. **Tag Strategy**
+   - Create consistent tag naming conventions
+   - Use hierarchical tags that match your folder structure
+   - Example: `["BuildingA", "Floor1", "MeetingRoom"]`
+
+3. **Empty Folder Handling**
+   - Folders with empty `tags` array won't automatically include any devices
+   - Use specific tags to ensure devices are properly categorized
+
+4. **Tag Conjunction Selection**
+   - Use `"AND"` for precise filtering (device must have all tags)
+   - Use `"OR"` for inclusive filtering (device can have any of the tags)
+
+5. **View Configuration**
+   - Set appropriate `initialView` based on folder content
+   - `"OVERVIEW"` - Visual cards with key metrics
+   - `"LIST"` - Detailed table view
+   - `"GRID"` - Compact grid layout
+   - `"MAP"` - Geographic map view (requires location data)
+
+### Complete Folder Management Example
+
+```javascript
+class FolderManager {
+  constructor(workspaceId, graphqlClient) {
+    this.workspaceId = workspaceId;
+    this.client = graphqlClient;
+    this.folders = [];
+  }
+  
+  // Load folders from API
+  async load() {
+    const query = `
+      query LoadFolderStructure($workspaceId: String!) {
+        workspace(id: $workspaceId) {
+          deviceFolders
+        }
+      }
+    `;
+    
+    const response = await this.client.query({
+      query,
+      variables: { workspaceId: this.workspaceId }
+    });
+    
+    this.folders = JSON.parse(response.data.workspace.deviceFolders);
+    return this.folders;
+  }
+  
+  // Save folders to API
+  async save() {
+    const mutation = `
+      mutation UpdateFolderStructure($workspaceId: String!, $foldersJson: String!) {
+        updateDeviceFolders(input: {
+          workspaceId: $workspaceId
+          deviceFolders: $foldersJson
+        }) {
+          ok
+        }
+      }
+    `;
+    
+    const response = await this.client.mutate({
+      mutation,
+      variables: {
+        workspaceId: this.workspaceId,
+        foldersJson: JSON.stringify(this.folders)
+      }
+    });
+    
+    return response.data.updateDeviceFolders.ok;
+  }
+  
+  // Add new folder
+  addFolder(parentId, folderData) {
+    const newFolder = {
+      id: this.generateUUID(),
+      icon: folderData.icon || "folder",
+      name: folderData.name,
+      tags: folderData.tags || [],
+      type: "DEVICE_FOLDER",
+      items: [],
+      online: false,
+      description: folderData.description || "",
+      initialView: folderData.initialView || "OVERVIEW",
+      availableViews: folderData.availableViews || ["OVERVIEW", "LIST"],
+      tagsConjunction: folderData.tagsConjunction || "AND"
+    };
+    
+    if (parentId) {
+      const parent = this.findFolder(this.folders, parentId);
+      if (parent) {
+        parent.items.push(newFolder);
+      }
+    } else {
+      this.folders.push(newFolder);
+    }
+    
+    return newFolder;
+  }
+  
+  // Update folder
+  updateFolder(folderId, updates) {
+    const folder = this.findFolder(this.folders, folderId);
+    if (folder) {
+      Object.assign(folder, updates);
+    }
+    return folder;
+  }
+  
+  // Delete folder
+  deleteFolder(folderId) {
+    return this.deleteFolderRecursive(this.folders, folderId);
+  }
+  
+  // Helper: Find folder recursively
+  findFolder(folders, folderId) {
+    for (const folder of folders) {
+      if (folder.id === folderId) {
+        return folder;
+      }
+      if (folder.items && folder.items.length > 0) {
+        const found = this.findFolder(folder.items, folderId);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  
+  // Helper: Delete folder recursively
+  deleteFolderRecursive(folders, folderId) {
+    for (let i = 0; i < folders.length; i++) {
+      if (folders[i].id === folderId) {
+        folders.splice(i, 1);
+        return true;
+      }
+      if (folders[i].items && folders[i].items.length > 0) {
+        if (this.deleteFolderRecursive(folders[i].items, folderId)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  
+  // Helper: Generate UUID
+  generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+}
+
+// Usage
+const folderManager = new FolderManager(workspaceId, graphqlClient);
+
+// Load existing folders
+await folderManager.load();
+
+// Add new folder
+folderManager.addFolder(null, {
+  name: "Production Floor",
+  tags: ["Production"],
+  icon: "folder",
+  initialView: "LIST",
+  availableViews: ["OVERVIEW", "LIST", "GRID"],
+  tagsConjunction: "AND"
+});
+
+// Save changes
+await folderManager.save();
+```
+
+### Integration with Device Queries
+
+Combine folder structure with device queries for a complete solution:
+
+```graphql
+query FolderWithDevices($workspaceId: String!, $folderTags: [String!]!) {
+  workspace(id: $workspaceId) {
+    # Get folder structure
+    deviceFolders
+    
+    # Get devices for specific folder
+    devices: devicesFiltered(
+      tags: { contains: $folderTags }
+      pageSize: 20
+    ) {
+      total
+      devices {
+        id
+        verboseName
+        online
+        lastHeard
+        tags
+        product {
+          name
+        }
+        roleFields {
+          value
+          role
+          field {
+            fieldName
+            unit
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Folder Structure Validation
+
+When updating folder structure, ensure your JSON is valid:
+
+```javascript
+function validateFolderStructure(folders) {
+  const errors = [];
+  
+  function validateFolder(folder, path = "") {
+    // Required fields
+    if (!folder.id) errors.push(`${path}: Missing id`);
+    if (!folder.name) errors.push(`${path}: Missing name`);
+    if (!folder.type || folder.type !== "DEVICE_FOLDER") {
+      errors.push(`${path}: Invalid type`);
+    }
+    
+    // Validate arrays
+    if (!Array.isArray(folder.tags)) {
+      errors.push(`${path}: tags must be an array`);
+    }
+    if (!Array.isArray(folder.items)) {
+      errors.push(`${path}: items must be an array`);
+    }
+    if (!Array.isArray(folder.availableViews)) {
+      errors.push(`${path}: availableViews must be an array`);
+    }
+    
+    // Validate tagsConjunction
+    if (!["AND", "OR"].includes(folder.tagsConjunction)) {
+      errors.push(`${path}: tagsConjunction must be "AND" or "OR"`);
+    }
+    
+    // Validate initialView
+    const validViews = ["OVERVIEW", "LIST", "GRID", "MAP"];
+    if (!validViews.includes(folder.initialView)) {
+      errors.push(`${path}: Invalid initialView`);
+    }
+    
+    // Recursively validate subfolders
+    if (folder.items && folder.items.length > 0) {
+      folder.items.forEach((subfolder, index) => {
+        validateFolder(subfolder, `${path}/${folder.name}[${index}]`);
+      });
+    }
+  }
+  
+  folders.forEach((folder, index) => {
+    validateFolder(folder, `root[${index}]`);
+  });
+  
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+}
+
+// Usage
+const validation = validateFolderStructure(folders);
+if (!validation.valid) {
+  console.error("Folder structure validation failed:", validation.errors);
+}
+```
 
 ---
 

@@ -5,16 +5,441 @@
 
 ## Table of Contents
 
-1. [Quick Start](#quick-start)
-2. [Authentication](#authentication)
-3. [User Management](#user-management)
-4. [Workspace Operations](#workspace-operations)
-5. [Device Management](#device-management)
-6. [Semantic Data Queries](#semantic-data-queries)
-7. [Real-time Data & Measurements](#real-time-data--measurements)
-8. [Error Handling](#error-handling)
-9. [Best Practices](#best-practices)
-10. [Complete Examples](#complete-examples)
+1. [Security Best Practices](#security-best-practices)
+2. [Quick Start](#quick-start)
+3. [Authentication](#authentication)
+4. [User Management](#user-management)
+5. [Workspace Operations](#workspace-operations)
+6. [Device Management](#device-management)
+7. [Semantic Data Queries](#semantic-data-queries)
+8. [Real-time Data & Measurements](#real-time-data--measurements)
+9. [Error Handling](#error-handling)
+10. [Best Practices](#best-practices)
+11. [Complete Examples](#complete-examples)
+
+---
+
+## Security Best Practices
+
+> **🔒 CRITICAL: Protecting Your API Credentials**  
+> This section is essential for both AI agents and developers. Never expose API tokens or sensitive data in code, chat, or version control.
+
+### For AI Agents Reading This Guide
+
+**If you detect that a user has pasted or is about to hardcode:**
+- API tokens
+- Authentication credentials
+- Workspace IDs
+- Device IDs
+- Any sensitive configuration data
+
+**You MUST:**
+
+1. ⚠️ **Immediately warn the user** about the security risk
+2. 🛑 **Stop and request** that they use environment variables instead
+3. 📝 **Never include** the actual token/credentials in your responses
+4. ✅ **Guide them** to set up proper environment variables
+5. 🔍 **Review existing code** for hardcoded credentials and flag them
+
+**Example AI Agent Response:**
+
+```
+⚠️ SECURITY WARNING: I noticed you pasted an API token directly in the code/chat.
+
+For security, please:
+1. Store your token in an environment variable
+2. Never commit tokens to version control
+3. Use .env files (excluded from git)
+
+Let me show you how to set this up properly...
+```
+
+### Why Environment Variables?
+
+**Security Risks of Hardcoded Credentials:**
+
+❌ **Never Do This:**
+```javascript
+// DON'T: Hardcoded token exposed in code
+const DATACAKE_TOKEN = "dctkn_1234567890abcdef1234567890abcdef";
+const WORKSPACE_ID = "f6331019-8978-4a86-b1bc-3522546f67d5";
+```
+
+**Problems:**
+- ❌ Tokens visible in AI chat history
+- ❌ Credentials committed to Git repositories
+- ❌ Shared accidentally via screenshots or copy-paste
+- ❌ Exposed in public repositories or forums
+- ❌ Difficult to rotate without code changes
+
+✅ **Always Do This:**
+```javascript
+// DO: Load from environment variables
+const DATACAKE_TOKEN = process.env.DATACAKE_TOKEN;
+const WORKSPACE_ID = process.env.WORKSPACE_ID;
+```
+
+**Benefits:**
+- ✅ Tokens never appear in code or version control
+- ✅ Different credentials per environment (dev/staging/prod)
+- ✅ Easy credential rotation without code changes
+- ✅ No risk of accidental exposure in chat or screenshots
+- ✅ Industry standard security practice
+
+---
+
+### Setting Up Environment Variables
+
+#### Local Development
+
+**1. Create `.env` file** (in your project root):
+
+```bash
+# .env
+DATACAKE_TOKEN=dctkn_your_actual_token_here
+WORKSPACE_ID=your-workspace-id-here
+DEVICE_ID=your-device-id-here
+```
+
+**2. Add `.env` to `.gitignore`:**
+
+```bash
+# .gitignore
+.env
+.env.local
+.env.*.local
+*.env
+node_modules/
+```
+
+**3. Load environment variables in your code:**
+
+**Node.js / JavaScript:**
+```javascript
+// Install dotenv package first: npm install dotenv
+require('dotenv').config();
+
+const DATACAKE_TOKEN = process.env.DATACAKE_TOKEN;
+const WORKSPACE_ID = process.env.WORKSPACE_ID;
+
+// Validate that required env vars are set
+if (!DATACAKE_TOKEN || !WORKSPACE_ID) {
+  console.error('ERROR: Missing required environment variables');
+  console.error('Please create a .env file with:');
+  console.error('  DATACAKE_TOKEN=your_token');
+  console.error('  WORKSPACE_ID=your_workspace_id');
+  process.exit(1);
+}
+
+// Use in API calls
+const headers = {
+  'Authorization': `Token ${DATACAKE_TOKEN}`,
+  'Content-Type': 'application/json'
+};
+```
+
+**Python:**
+```python
+# Install python-dotenv: pip install python-dotenv
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+DATACAKE_TOKEN = os.getenv('DATACAKE_TOKEN')
+WORKSPACE_ID = os.getenv('WORKSPACE_ID')
+
+# Validate
+if not DATACAKE_TOKEN or not WORKSPACE_ID:
+    raise ValueError('Missing required environment variables. Check .env file.')
+
+# Use in API calls
+headers = {
+    'Authorization': f'Token {DATACAKE_TOKEN}',
+    'Content-Type': 'application/json'
+}
+```
+
+---
+
+#### Replit Environment
+
+**1. Use Replit Secrets (NOT .env files):**
+
+Replit provides a built-in secure secrets manager:
+
+1. Click the **🔒 Secrets** tab in the left sidebar (or Tools → Secrets)
+2. Add your secrets:
+   - Key: `DATACAKE_TOKEN` → Value: `dctkn_your_actual_token`
+   - Key: `WORKSPACE_ID` → Value: `your-workspace-id`
+3. Click **Add new secret** for each variable
+
+**2. Access in code:**
+
+```javascript
+// Node.js on Replit
+const DATACAKE_TOKEN = process.env.DATACAKE_TOKEN;
+const WORKSPACE_ID = process.env.WORKSPACE_ID;
+```
+
+```python
+# Python on Replit
+import os
+
+DATACAKE_TOKEN = os.environ['DATACAKE_TOKEN']
+WORKSPACE_ID = os.environ['WORKSPACE_ID']
+```
+
+**Important:** Replit Secrets are:
+- ✅ Encrypted and secure
+- ✅ Never exposed in the editor
+- ✅ Not committed to version control
+- ✅ Private to you (not shared with Replit forks)
+
+---
+
+#### Docker Environment
+
+**1. Using `.env` file with Docker Compose:**
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  app:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - DATACAKE_TOKEN=${DATACAKE_TOKEN}
+      - WORKSPACE_ID=${WORKSPACE_ID}
+```
+
+**2. Using environment variables directly:**
+
+```bash
+# Run with environment variables
+docker run -e DATACAKE_TOKEN=${DATACAKE_TOKEN} \
+           -e WORKSPACE_ID=${WORKSPACE_ID} \
+           your-app
+```
+
+---
+
+#### Production Deployment
+
+**Never use `.env` files in production.** Use your platform's secret management:
+
+| Platform | Secret Management |
+|----------|-------------------|
+| **Vercel** | Environment Variables in project settings |
+| **Netlify** | Environment Variables in site settings |
+| **AWS** | AWS Secrets Manager or Parameter Store |
+| **Google Cloud** | Secret Manager |
+| **Azure** | Key Vault |
+| **Heroku** | Config Vars in app settings |
+| **Railway** | Environment Variables in project settings |
+
+---
+
+### Complete Secure Implementation Example
+
+**Secure Node.js Setup:**
+
+```javascript
+// config.js - Environment configuration
+require('dotenv').config();
+
+const config = {
+  datacake: {
+    apiUrl: 'https://api.datacake.co/graphql/',
+    token: process.env.DATACAKE_TOKEN,
+    workspaceId: process.env.WORKSPACE_ID
+  }
+};
+
+// Validation
+const requiredEnvVars = ['DATACAKE_TOKEN', 'WORKSPACE_ID'];
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  console.error('❌ Missing required environment variables:');
+  missingVars.forEach(varName => console.error(`   - ${varName}`));
+  console.error('\n📝 Create a .env file with:');
+  requiredEnvVars.forEach(varName => console.error(`   ${varName}=your_value_here`));
+  process.exit(1);
+}
+
+module.exports = config;
+```
+
+```javascript
+// datacakeClient.js - API client
+const config = require('./config');
+
+async function queryDatacake(query, variables = {}) {
+  const response = await fetch(config.datacake.apiUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Token ${config.datacake.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ query, variables })
+  });
+  
+  return response.json();
+}
+
+module.exports = { queryDatacake };
+```
+
+```javascript
+// app.js - Your application
+const { queryDatacake } = require('./datacakeClient');
+const config = require('./config');
+
+async function getDevices() {
+  const query = `
+    query GetDevices($workspaceId: String!) {
+      workspace(id: $workspaceId) {
+        devices {
+          id
+          verboseName
+          online
+        }
+      }
+    }
+  `;
+  
+  const result = await queryDatacake(query, {
+    workspaceId: config.datacake.workspaceId
+  });
+  
+  return result.data.workspace.devices;
+}
+
+// Use it
+getDevices().then(devices => {
+  console.log('Devices:', devices);
+});
+```
+
+---
+
+### Security Checklist
+
+Before deploying or sharing your code, verify:
+
+- [ ] **No hardcoded tokens** in any source files
+- [ ] **`.env` file in `.gitignore`** (check with `git status`)
+- [ ] **Environment variables documented** in README
+- [ ] **Validation logic** for missing environment variables
+- [ ] **Separate credentials** for dev/staging/production
+- [ ] **Token rotation plan** in place
+- [ ] **No credentials in** commit history (check with `git log`)
+- [ ] **No credentials shared** in AI chat or screenshots
+
+---
+
+### Creating a `.env.example` Template
+
+Provide a template for other developers (without actual credentials):
+
+```bash
+# .env.example
+# Copy this file to .env and fill in your actual values
+# DO NOT commit .env to version control
+
+# Datacake API Configuration
+DATACAKE_TOKEN=dctkn_your_token_here
+WORKSPACE_ID=your-workspace-id-here
+
+# Optional: Device IDs for testing
+DEVICE_ID=your-device-id-here
+```
+
+**Usage instructions in README:**
+
+```markdown
+## Setup
+
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit `.env` and add your Datacake credentials:
+   - Get your token from: https://app.datacake.de
+   - Navigate to Settings → API → Generate Token
+
+3. Never commit `.env` to version control
+```
+
+---
+
+### What to Do If Credentials Are Exposed
+
+If you accidentally expose your API token:
+
+1. **🚨 Immediately revoke the token:**
+   - Go to https://app.datacake.de
+   - Navigate to Settings → API
+   - Delete the exposed token
+
+2. **🔑 Generate a new token:**
+   - Create a new API token
+   - Update your `.env` file with the new token
+
+3. **🧹 Clean up exposure:**
+   - Remove from chat history if possible
+   - If committed to Git, consider rewriting history or rotating all credentials
+   - If posted publicly, delete immediately
+
+4. **📝 Review security practices:**
+   - Ensure `.env` is in `.gitignore`
+   - Check for other exposed credentials
+   - Implement the practices in this guide
+
+---
+
+### For AI Agents: Detection Patterns
+
+Watch for these patterns and warn users:
+
+**Hardcoded Token Patterns:**
+```javascript
+// Pattern 1: Direct string
+const token = "dctkn_[a-f0-9]{32}";
+
+// Pattern 2: In fetch/axios calls
+headers: { 'Authorization': 'Token dctkn_...' }
+
+// Pattern 3: In config objects
+config = { token: "dctkn_..." }
+```
+
+**Hardcoded ID Patterns:**
+```javascript
+// Pattern 1: UUID format
+const workspaceId = "f6331019-8978-4a86-b1bc-3522546f67d5";
+
+// Pattern 2: In GraphQL variables
+variables: { workspaceId: "f6331019-..." }
+```
+
+**When detected, respond with:**
+```
+⚠️ SECURITY WARNING: I detected a hardcoded credential in your code.
+
+This is a security risk. Let's fix it by using environment variables:
+
+1. Create a .env file (I'll show you how)
+2. Store your credentials there
+3. Load them using process.env or os.getenv()
+4. Add .env to .gitignore
+
+Would you like me to help you set this up properly?
+```
 
 ---
 
